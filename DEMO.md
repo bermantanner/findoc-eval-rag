@@ -92,24 +92,45 @@ Save the `document_id` — you'll need it to query.
 
 ## 6. Query the document
 
+The easiest way to query is the interactive CLI. Pass the `document_id` from step 5:
+
 ```bash
-curl -X POST http://localhost:8000/api/v1/query \
+python3 ask.py <your-document-id>
+```
+
+You'll be prompted for questions in a loop:
+
+```
+Ask a question (or 'quit' to exit): What was total revenue in FY2025?
+
+============================================================
+ANSWER
+============================================================
+NVIDIA's total revenue in FY2025 was $130,497 million.
+
+============================================================
+SOURCES
+============================================================
+[1] NVIDIA FY2025 — Page 52 (similarity: 0.65)
+    ...Consolidated Statements of Income...Revenue $ 130,497 $ 60,922 $ 26,974...
+
+...
+```
+
+Type `quit` to exit.
+
+### Raw API (optional)
+
+For direct API access the endpoint accepts JSON and returns plain text with `?format=plain`:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/query?format=plain" \
   -H "X-API-Key: dev-secret-key" \
   -H "Content-Type: application/json" \
   -d '{"query": "What was total revenue in FY2025?", "document_id": "<your-document-id>"}'
 ```
 
-The response streams as Server-Sent Events:
-
-```
-data: {"type": "token", "content": "NVIDIA"}
-data: {"type": "token", "content": "'s total revenue"}
-...
-data: {"type": "source_nodes", "chunks": [...]}
-data: [DONE]
-```
-
-Each `token` event contains a piece of the generated answer. The final `source_nodes` event contains the exact database chunks used to produce the answer, including page numbers and similarity scores.
+Omit `?format=plain` to receive a raw Server-Sent Events stream instead.
 
 ---
 

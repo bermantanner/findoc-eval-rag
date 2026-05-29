@@ -13,7 +13,7 @@ from ingestion.parser import parse_pdf
 from ingestion.chunker import chunk_blocks
 from ingestion.vectorizer import embed_chunks
 from retrieval.vector_store import save_document, save_chunks, search_chunks
-from synthesis.engine import stream_answer
+from synthesis.engine import stream_answer, plain_answer
 
 
 @asynccontextmanager
@@ -73,7 +73,7 @@ class QueryRequest(BaseModel):
 
 
 @app.post("/api/v1/query")
-async def query_document(request: Request, body: QueryRequest):
+async def query_document(request: Request, body: QueryRequest, format: str = "stream"):
     chunks = await search_chunks(
         request.app.state.db,
         query=body.query,
@@ -81,6 +81,11 @@ async def query_document(request: Request, body: QueryRequest):
     )
     if not chunks:
         raise HTTPException(status_code=404, detail="No relevant chunks found.")
+
+    if format == "plain":
+        result = await plain_answer(body.query, chunks)
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(result)
 
     return StreamingResponse(
         stream_answer(body.query, chunks),
