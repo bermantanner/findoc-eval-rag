@@ -1,15 +1,19 @@
 import os
 import tempfile
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import asyncpg
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from api.middleware import AuthMiddleware
 from ingestion.parser import parse_pdf
 from ingestion.chunker import chunk_blocks
 from ingestion.vectorizer import embed_chunks
-from retrieval.vector_store import save_document, save_chunks
+from retrieval.vector_store import save_document, save_chunks, search_chunks
+from synthesis.engine import stream_answer
 
 
 @asynccontextmanager
@@ -61,3 +65,24 @@ async def upload_document(
         os.unlink(tmp_path)
 
     return {"document_id": document_id, "chunks_stored": len(embedded)}
+
+
+class QueryRequest(BaseModel):
+    query: str
+    document_id: Optional[str] = None
+
+
+@app.post("/api/v1/query")
+async def query_document(request: Request, body: QueryRequest):
+    chunks = await search_chunks(
+        request.app.state.db,
+        query=body.query,
+        document_id=body.document_id,
+    )
+    if not chunks:
+        raise HTTPException(status_code=404, detail="No relevant chunks found.")
+
+    return StreamingResponse(
+        stream_answer(body.query, chunks),
+        media_type="text/event-stream",
+    )

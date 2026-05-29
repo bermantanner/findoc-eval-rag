@@ -1,0 +1,11 @@
+Me: Yes, what's the plan for this?
+
+LLM: Three things to build:
+
+ingestion/vectorizer.py — takes the list of chunks from the chunker, calls the OpenAI embeddings API (text-embedding-3-small) in async batches, and returns each chunk paired with its embedding vector. Batching matters here because the NVIDIA filing produces 344 chunks — we don't want 344 individual API calls.
+
+retrieval/vector_store.py — handles the DB writes. Takes the document metadata + embedded chunks and inserts rows into documents and document_chunks. This is also where the retrieval query will live later (cosine similarity search), but for now we just need the write path.
+
+POST /api/v1/documents/upload in api/main.py — the endpoint that wires it all together. Accepts a multipart PDF upload with company and fiscal_year form fields, runs it through parse → chunk → vectorize → store, and returns the document ID.
+
+The OpenAI batch size limit for embeddings is 2048 inputs per request, so our 344 chunks fit in a single call. We'll still structure it as batches in case we ever exceed that with a larger document.

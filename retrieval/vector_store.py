@@ -1,6 +1,9 @@
 import json
 import asyncpg
+from openai import AsyncOpenAI
 from ingestion.chunker import Chunk
+
+EMBEDDING_MODEL = "text-embedding-3-small"
 
 
 async def save_document(pool: asyncpg.Pool, filename: str, company: str, fiscal_year: str) -> str:
@@ -40,3 +43,38 @@ async def save_chunks(
             """,
             records,
         )
+
+
+async def search_chunks(
+    pool: asyncpg.Pool,
+    query: str,
+    document_id: str | None = None,
+    user_id: str = "default",
+    top_k: int = 5,
+) -> list[dict]:
+    client = AsyncOpenAI(timeout=30.0)
+    response = await client.embeddings.create(model=EMBEDDING_MODEL, input=[query])
+    query_vector = str(response.data[0].embedding)
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT chunk_text, metadata,
+                   1 - (embedding <=> $1::vector) AS similarity
+            FROM document_chunks
+            WHERE user_id = $2
+              AND ($3::uuid IS NULL OR document_id = $3::uuid)
+            ORDER BY embedding <=> $1::vector
+            LIMIT $4
+            """,
+            query_vector, user_id, document_id, top_k,
+        )
+
+    return [
+        {
+            "chunk_text": row["chunk_text"],
+            "metadata": json.loads(row["metadata"]),
+            "similarity": float(row["similarity"]),
+        }
+        for row in rows
+    ]

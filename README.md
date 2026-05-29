@@ -1,33 +1,90 @@
-# findoc-eval-rag
-## Title:
+# FinDoc-Eval: Financial Document RAG Pipeline
 
-FinDoc-Eval: Automated Benchmarking for Financial Document Retrieval
+An asynchronous RAG (Retrieval-Augmented Generation) pipeline for querying SEC 10-K financial filings. Upload a PDF, ask a question, get a streamed answer grounded in the exact source passages — with the retrieved chunks returned alongside the response.
 
-## One sentence description:
+The primary engineering focus is an automated evaluation framework (in progress) to systematically benchmark retrieval accuracy and latency across multiple real-world financial documents.
 
-Intelligent search engine to query complex SEC financial filings, using custom automated Python test suite to measure and improve data retrieval accuracy (Ship with auth + live URL)
+---
 
-## Planned technologies:
+## What it does
 
-For the backend I plan to use Python with FastAPI for handling the concurrent API requests and streaming text responses. For the database, I want to use PostgreSQL and an extension so I can store the app data and vector embeddings in the same place. For the LLM layer I probably will use Anthropic. For deployment, I'll do Docker containers hosted on AWS or. Vercel using a simple auth setup to keep user data separate.
+1. **Ingest** — Upload a native-text-layer PDF via the API. The pipeline extracts text and tables (tables are converted to Markdown to preserve structure), chunks the content into ~512-token segments with overlap, generates embeddings via OpenAI, and stores everything in PostgreSQL + pgvector.
+2. **Retrieve** — A query is embedded and run against the vector store using cosine similarity to find the most relevant chunks.
+3. **Synthesize** — Retrieved chunks are assembled into a strict prompt and streamed through `gpt-4o`, with a hallucination-prevention directive. The response streams as Server-Sent Events, with the source chunks appended at the end.
 
-## First deliverable:
+---
 
-I want to have a working backend API endpoint where an authenticated user can upload a single SEC 10-K financial PDF. System will extract the text, split it into chunks, generate embeddings, and save everything into the vector database. The user can then send a text question and get back the exact paragraphs needed to answer it.
+## Tech Stack
 
-## Rough architecture for the first deliverable:
+| Layer | Technology |
+|---|---|
+| API | Python, FastAPI (async) |
+| Database | PostgreSQL + pgvector |
+| PDF Parsing | pdfplumber |
+| Embeddings | OpenAI `text-embedding-3-small` (1536 dims) |
+| Synthesis | OpenAI `gpt-4o` (SSE streaming) |
+| Tokenization | tiktoken (`cl100k_base`) |
+| Infrastructure | Docker, Docker Compose |
 
-The 5 core components im thinking are 
-1. Auth Middleware (intercept incoming request to verify user tokens)
-2. Ingestion & Parser pipeline (takes raw PDF, uses python libraries to pull out text while preserving layout of the financial tables)
-3. Vectorization Engine (slices the processed text into chunks, passes them to embedding API, and gets back data vectors.
-4. Retrieval Engine (takes user question, turns it into a vector, runs a similarity query against pgvector, and returns most relevant matching text snippets.
-5. Synthesis Engine (packages the retrieved financial snippets alongside user's question into a clean prompt, hits LLM, streams final answer back)
+---
 
-## After first deliverable goals:
+## API
 
-- The Testing Harness: I will write standalone python script with a fixed gold dataset of many complex numeric questions directly mapped to the real financial answers in the filings. 
-- Retrieval Tuning: I'll implement and test different test splitting methods to raise test scores
-- Developer dashboard: If there's time, a clean minimal TypeScript/Next.js dashboard that tracks the system metrics. (Im thinking like look-up speed, API costs, current accuracy?)
-- Cost guardrails: If there's time, a simple Redis tool to log API usage per user, which blocks further queries if an account hits a safe monthly budget ceiling. (This is probably way out of scope, might add it in the summer)
+All endpoints require `X-API-Key: dev-secret-key` header except `/health`.
 
+### `GET /health`
+Returns `{"status": "ok"}` if the API and database are reachable.
+
+### `POST /api/v1/documents/upload`
+Upload a PDF for ingestion.
+
+**Form fields:** `file` (PDF), `company` (string), `fiscal_year` (string)
+
+**Response:**
+```json
+{"document_id": "<uuid>", "chunks_stored": 344}
+```
+
+### `POST /api/v1/query`
+Query an ingested document.
+
+**Body:**
+```json
+{"query": "What was total revenue in FY2025?", "document_id": "<uuid>"}
+```
+
+**Response:** SSE stream of `token` events, followed by a `source_nodes` event and `[DONE]`.
+
+---
+
+## Project Structure
+
+```
+findoc-eval-rag/
+├── api/
+│   ├── main.py              # FastAPI app and route definitions
+│   └── middleware.py        # Stub API key auth (V2: JWT + RLS)
+├── ingestion/
+│   ├── parser.py            # pdfplumber extraction, table-to-Markdown
+│   ├── chunker.py           # tiktoken-based semantic chunking
+│   └── vectorizer.py        # Async OpenAI embeddings
+├── retrieval/
+│   └── vector_store.py      # pgvector writes and cosine similarity search
+├── synthesis/
+│   └── engine.py            # Prompt assembly and gpt-4o SSE streaming
+├── eval/                    # Evaluation harness (in progress)
+├── db/
+│   └── schema.sql           # Table definitions and pgvector extension
+├── proposal/
+│   ├── original_proposal.md
+│   └── marked_up_proposal.md
+├── DESIGN.md                # Full system architecture specification
+├── DEMO.md                  # Setup and usage instructions
+└── BENCHMARKS.md            # Auto-updated by eval harness (in progress)
+```
+
+---
+
+## Setup
+
+See [DEMO.md](DEMO.md) for full build and usage instructions.
