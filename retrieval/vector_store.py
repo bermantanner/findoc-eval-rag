@@ -23,11 +23,12 @@ async def save_chunks(
     pool: asyncpg.Pool,
     document_id: str,
     embedded_chunks: list[tuple[Chunk, list[float]]],
+    user_id: str = "default",
 ) -> None:
     records = [
         (
             document_id,
-            "default",
+            user_id,
             chunk.text,
             str(embedding),
             json.dumps(chunk.metadata),
@@ -51,6 +52,7 @@ async def search_chunks(
     document_id: str | None = None,
     user_id: str = "default",
     top_k: int = 5,
+    min_similarity: float = 0.5,
 ) -> list[dict]:
     client = AsyncOpenAI(timeout=30.0)
     response = await client.embeddings.create(model=EMBEDDING_MODEL, input=[query])
@@ -59,15 +61,18 @@ async def search_chunks(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT chunk_text, metadata,
-                   1 - (embedding <=> $1::vector) AS similarity
-            FROM document_chunks
-            WHERE user_id = $2
-              AND ($3::uuid IS NULL OR document_id = $3::uuid)
-            ORDER BY embedding <=> $1::vector
-            LIMIT $4
+            WITH ranked AS (
+                SELECT chunk_text, metadata,
+                       1 - (embedding <=> $1::vector) AS similarity
+                FROM document_chunks
+                WHERE user_id = $2
+                  AND ($3::uuid IS NULL OR document_id = $3::uuid)
+                ORDER BY embedding <=> $1::vector
+                LIMIT $4
+            )
+            SELECT * FROM ranked WHERE similarity >= $5
             """,
-            query_vector, user_id, document_id, top_k,
+            query_vector, user_id, document_id, top_k, min_similarity,
         )
 
     return [

@@ -2,7 +2,7 @@
 
 An asynchronous RAG (Retrieval-Augmented Generation) pipeline for querying SEC 10-K financial filings. Upload a PDF, ask a question, get a streamed answer grounded in the exact source passages — with the retrieved chunks returned alongside the response.
 
-The primary engineering focus is an automated evaluation framework (in progress) to systematically benchmark retrieval accuracy and latency across multiple real-world financial documents.
+The primary engineering focus is an automated evaluation framework that benchmarks retrieval accuracy and answer correctness using an LLM-as-judge approach. Tested against 10 curated questions from the NVIDIA FY2025 10-K: **70% answer correctness, 90% retrieval hit rate**.
 
 ---
 
@@ -23,6 +23,7 @@ The primary engineering focus is an automated evaluation framework (in progress)
 | PDF Parsing | pdfplumber |
 | Embeddings | OpenAI `text-embedding-3-small` (1536 dims) |
 | Synthesis | OpenAI `gpt-4o` (SSE streaming) |
+| Eval Judge | OpenAI `gpt-4o-mini` (LLM-as-judge) |
 | Tokenization | tiktoken (`cl100k_base`) |
 | Infrastructure | Docker, Docker Compose |
 
@@ -55,6 +56,25 @@ Query an ingested document.
 
 **Response:** SSE stream of `token` events, followed by a `source_nodes` event and `[DONE]`.
 
+Add `?format=plain` to receive a formatted plain-text response instead of SSE.
+
+---
+
+## Eval Harness
+
+Run the automated benchmark against a live document:
+
+```bash
+python3 eval/eval_harness.py --document-id <uuid>
+```
+
+Loads `eval/golden_dataset.json` (10 curated Q&A pairs from the NVIDIA FY2025 10-K), queries the API for each, and scores results on two dimensions:
+
+- **Retrieval confidence** — cosine similarity of the top returned chunk vs. a 0.60 threshold
+- **Answer correctness** — graded by `gpt-4o-mini` with a financial-domain judge prompt
+
+Results are written to `BENCHMARKS.md`. Requires `httpx`, `openai`, and `python-dotenv` installed locally.
+
 ---
 
 ## Project Structure
@@ -72,7 +92,9 @@ findoc-eval-rag/
 │   └── vector_store.py      # pgvector writes and cosine similarity search
 ├── synthesis/
 │   └── engine.py            # Prompt assembly and gpt-4o SSE streaming
-├── eval/                    # Evaluation harness (in progress)
+├── eval/
+│   ├── eval_harness.py      # Standalone benchmark runner (LLM-as-judge)
+│   └── golden_dataset.json  # 10 curated Q&A pairs from NVIDIA FY2025 10-K
 ├── db/
 │   └── schema.sql           # Table definitions and pgvector extension
 ├── proposal/
@@ -80,7 +102,8 @@ findoc-eval-rag/
 │   └── marked_up_proposal.md
 ├── DESIGN.md                # Full system architecture specification
 ├── DEMO.md                  # Setup and usage instructions
-└── BENCHMARKS.md            # Auto-updated by eval harness (in progress)
+├── BENCHMARKS.md            # Auto-generated benchmark results
+└── REGRETS.md               # Post-mortem and lessons learned
 ```
 
 ---
@@ -89,5 +112,6 @@ findoc-eval-rag/
 
 See [DEMO.md](DEMO.md) for full build and usage instructions.
 
-## Quick Video Demo
-https://youtu.be/Y6EHmm7Ma20
+## Demo
+https://youtu.be/G7z_XG-T8DY
+

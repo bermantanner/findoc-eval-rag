@@ -25,7 +25,7 @@ Intelligent search engine to query complex SEC financial filings, using custom a
 
 > For deployment, I'll do Docker containers hosted on AWS or Vercel using a simple auth setup to keep user data separate.
 
-**(b) Partially implemented, partially planned.** Docker is fully implemented — the entire stack runs with `docker compose up`. Cloud deployment to AWS/Vercel is planned for the final submission. A stub auth middleware is in place (`api/middleware.py`) using a hardcoded API key; full JWT-based user auth is planned for V2.
+**(b) Partially implemented.** Docker is fully implemented — the entire stack runs with `docker compose up`. Cloud deployment to AWS/Vercel did not ship for the final submission; the system runs locally. A stub auth middleware is in place (`api/middleware.py`) using a hardcoded API key; full JWT-based user auth with row-level security is planned for V2 (summer roadmap).
 
 ---
 
@@ -77,11 +77,11 @@ Intelligent search engine to query complex SEC financial filings, using custom a
 
 > The Testing Harness: I will write standalone python script with a fixed gold dataset of many complex numeric questions directly mapped to the real financial answers in the filings.
 
-**(b) Planned.** Will be implemented as `eval/eval_harness.py` with a curated Q&A dataset at `eval/golden_dataset.json`. Results will be written to `BENCHMARKS.md` with timestamps. Planned for the final submission after the eval corpus is expanded beyond a single document.
+**(a) Implemented.** `eval/eval_harness.py` — standalone script that loads `eval/golden_dataset.json` (10 curated Q&A pairs verified against the NVIDIA FY2025 10-K), hits the live API, and scores each result on two dimensions: retrieval confidence (top chunk cosine similarity vs. a 0.60 threshold) and answer correctness (graded by a `gpt-4o-mini` LLM judge). Results are written to `BENCHMARKS.md` with timestamps, per-question judge reasoning, and a Failed Cases section for diagnosis. Final benchmark: **70% answer correctness, 90% retrieval hit rate**. The eval framework also drove a targeted fix to `ingestion/parser.py` — a table Markdown formatting bug was identified through benchmark regression and corrected, improving correctness from 60% to 70%.
 
 > Retrieval Tuning: I'll implement and test different test splitting methods to raise test scores
 
-**(b) Planned.** Chunking parameters live in `ingestion/chunker.py` (`CHUNK_SIZE`, `CHUNK_OVERLAP`) and are easy to iterate on. The eval harness results in `BENCHMARKS.md` will track the impact of each change. Planned for the final submission.
+**(b) Partially implemented.** A similarity confidence gate was added to `retrieval/vector_store.py` (`min_similarity=0.5` parameter): if no retrieved chunks score above the threshold, the LLM is skipped entirely and an empty result is returned, preventing hallucination on irrelevant queries and saving API cost. Full chunking parameter ablation (varying `CHUNK_SIZE`, `CHUNK_OVERLAP`, `top_k`) was not completed — this is the primary planned continuation for summer, using `BENCHMARKS.md` as the measurement baseline.
 
 > Developer dashboard: If there's time, a clean minimal TypeScript/Next.js dashboard that tracks the system metrics. (Im thinking like look-up speed, API costs, current accuracy?)
 

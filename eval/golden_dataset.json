@@ -1,0 +1,67 @@
+{
+  "_note": "Verify all expected_answer values against NVIDIA-10-K-2025.pdf before treating benchmark results as authoritative. Numbers marked with [verify] are approximations from public sources.",
+  "questions": [
+    {
+      "id": "nvda_001",
+      "question": "What was NVIDIA's total revenue for fiscal year 2025?",
+      "expected_answer": "$130.5 billion",
+      "tags": ["financials", "revenue"]
+    },
+    {
+      "id": "nvda_002",
+      "question": "What was NVIDIA's Data Center segment revenue in fiscal year 2025?",
+      "expected_answer": "$115.19 billion",
+      "tags": ["financials", "segments"]
+    },
+    {
+      "id": "nvda_003",
+      "question": "What was NVIDIA's Gaming segment revenue in fiscal year 2025?",
+      "expected_answer": "$11.35 billion",
+      "tags": ["financials", "segments"]
+    },
+    {
+      "id": "nvda_004",
+      "question": "What was NVIDIA's net income for fiscal year 2025?",
+      "expected_answer": "$72.88 billion",
+      "tags": ["financials", "profitability"],
+      "_verify": true
+    },
+    {
+      "id": "nvda_005",
+      "question": "What was NVIDIA's gross margin percentage for fiscal year 2025?",
+      "expected_answer": "75%",
+      "tags": ["financials", "profitability"]
+    },
+    {
+      "id": "nvda_006",
+      "question": "Who is the President and Chief Executive Officer of NVIDIA?",
+      "expected_answer": "Jensen Huang",
+      "tags": ["leadership"]
+    },
+    {
+      "id": "nvda_007",
+      "question": "Where is NVIDIA's principal executive office located?",
+      "expected_answer": "2788 San Tomas Expressway, Santa Clara, California 95051",
+      "tags": ["company-info"]
+    },
+    {
+      "id": "nvda_008",
+      "question": "What were NVIDIA's research and development expenses in fiscal year 2025?",
+      "expected_answer": "$12.91 billion",
+      "tags": ["financials", "expenses"]
+    },
+    {
+      "id": "nvda_009",
+      "question": "How many full-time employees did NVIDIA have at the end of fiscal year 2025?",
+      "expected_answer": "approximately 36,000 full-time employees",
+      "tags": ["company-info"],
+      "_verify": true
+    },
+    {
+      "id": "nvda_010",
+      "question": "What manufacturing risk does NVIDIA identify related to its reliance on third-party suppliers?",
+      "expected_answer": "NVIDIA relies on a limited number of third-party manufacturers, including TSMC, to produce its semiconductors. Disruptions to these manufacturing relationships — due to geopolitical tensions, natural disasters, or capacity constraints — could impair NVIDIA's ability to supply products and materially harm its business.",
+      "tags": ["risk-factors", "supply-chain"]
+    }
+  ]
+}

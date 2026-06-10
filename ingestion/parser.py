@@ -54,8 +54,9 @@ def _table_to_markdown(table: list[list]) -> str:
     cleaned = []
     for row in table:
         cells = [str(c).strip() if c is not None else "" for c in row]
-        if any(cells):
-            cleaned.append(cells)
+        merged = _merge_row(cells)
+        if merged:
+            cleaned.append(merged)
 
     if not cleaned:
         return ""
@@ -67,3 +68,19 @@ def _table_to_markdown(table: list[list]) -> str:
             lines.append("|" + "|".join(["---"] * len(row)) + "|")
 
     return "\n".join(lines)
+
+
+def _merge_row(cells: list[str]) -> list[str]:
+    """Merge currency symbols with adjacent values and drop empty cells."""
+    merged = []
+    skip = False
+    for i, cell in enumerate(cells):
+        if skip:
+            skip = False
+            continue
+        if cell in ("$", "€", "£", "¥") and i + 1 < len(cells) and cells[i + 1]:
+            merged.append(f"{cell}{cells[i + 1]}")
+            skip = True
+        elif cell:
+            merged.append(cell)
+    return merged

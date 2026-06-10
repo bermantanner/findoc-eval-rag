@@ -134,8 +134,31 @@ Omit `?format=plain` to receive a raw Server-Sent Events stream instead.
 
 ---
 
+---
+
+## 7. Run the eval harness (optional)
+
+The eval harness benchmarks the system against 10 curated questions from the NVIDIA FY2025 10-K. It runs locally and hits the API over HTTP, so the stack must be running.
+
+Install the harness dependencies locally:
+
+```bash
+pip install httpx openai python-dotenv
+```
+
+Run the benchmark, passing the `document_id` from step 5:
+
+```bash
+python3 eval/eval_harness.py --document-id <your-document-id>
+```
+
+Results are printed to the terminal in real time and written to `BENCHMARKS.md` when complete.
+
+---
+
 ## Notes
 
 - The API key for V1 is hardcoded as `dev-secret-key`. Full JWT authentication is planned for V2.
 - Only native-text-layer PDFs are supported. Scanned PDFs (image-only) will return `415 Unsupported Media Type`.
+- The similarity confidence gate (`min_similarity=0.5`) will return a 404 if no retrieved chunks are relevant enough. This is intentional — it prevents the LLM from being called on unrelated queries.
 - To stop the stack: `docker compose down`. To also delete the database volume: `docker compose down -v`.
