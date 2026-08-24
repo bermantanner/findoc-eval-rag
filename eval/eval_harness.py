@@ -55,6 +55,7 @@ def parse_plain_response(text: str) -> tuple[str, float]:
 def judge_answer(client: OpenAI, question: str, expected: str, actual: str) -> dict:
     response = client.chat.completions.create(
         model=JUDGE_MODEL,
+        temperature=0,
         messages=[
             {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
             {

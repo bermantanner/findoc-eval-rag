@@ -37,6 +37,7 @@ async def stream_answer(query: str, chunks: list[dict]):
 
     stream = await client.chat.completions.create(
         model=SYNTHESIS_MODEL,
+        temperature=0,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Context:\n{_build_context(chunks)}\n\nQuestion: {query}"},
@@ -58,6 +59,7 @@ async def plain_answer(query: str, chunks: list[dict]) -> str:
 
     response = await client.chat.completions.create(
         model=SYNTHESIS_MODEL,
+        temperature=0,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Context:\n{_build_context(chunks)}\n\nQuestion: {query}"},
