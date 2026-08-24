@@ -13,7 +13,7 @@ Prerequisites:
 
 import argparse
 import json
-import re
+
 import time
 from datetime import datetime
 from pathlib import Path
@@ -41,15 +41,6 @@ that is INCORRECT
 - For qualitative questions, the actual answer must convey the same key concept as the expected answer
 
 Respond with JSON only: {"correct": true/false, "reason": "<one sentence explanation>"}"""
-
-
-def parse_plain_response(text: str) -> tuple[str, float]:
-    sep = "=" * 60
-    parts = text.split(sep)
-    answer = parts[2].strip() if len(parts) > 2 else text.strip()
-    similarities = re.findall(r"similarity: (\d+\.\d+)", text)
-    top_similarity = float(similarities[0]) if similarities else 0.0
-    return answer, top_similarity
 
 
 def judge_answer(client: OpenAI, question: str, expected: str, actual: str) -> dict:
@@ -97,7 +88,6 @@ def run_eval(document_id: str, api_url: str) -> None:
                 f"{api_url}/api/v1/query",
                 headers={"X-API-Key": API_KEY},
                 json={"query": item["question"], "document_id": document_id},
-                params={"format": "plain"},
                 timeout=30.0,
             )
             latency = time.time() - start
@@ -105,7 +95,11 @@ def run_eval(document_id: str, api_url: str) -> None:
             if response.status_code != 200:
                 raise RuntimeError(f"HTTP {response.status_code}: {response.text[:120]}")
 
-            actual_answer, top_similarity = parse_plain_response(response.text)
+            payload = response.json()
+            actual_answer = payload["answer"]
+            retrieved = payload["chunks"]
+            top_similarity = retrieved[0]["similarity"] if retrieved else 0.0
+            retrieved_pages = [c["page"] for c in retrieved]
 
         except Exception as exc:
             latency = time.time() - start
@@ -117,9 +111,11 @@ def run_eval(document_id: str, api_url: str) -> None:
                 "correct": False,
                 "reason": f"Request failed: {exc}",
                 "top_similarity": 0.0,
+                "retrieved_pages": [],
                 "latency": latency,
+                "transport_error": True,
             })
-            print(f"       ✖️ ERROR — {exc}")
+            print(f"       ⚠️  TRANSPORT ERROR — {exc}")
             continue
 
         verdict = judge_answer(
@@ -134,7 +130,9 @@ def run_eval(document_id: str, api_url: str) -> None:
             "correct": verdict["correct"],
             "reason": verdict["reason"],
             "top_similarity": top_similarity,
+            "retrieved_pages": retrieved_pages,
             "latency": latency,
+            "transport_error": False,
         })
 
         status = "✔️" if verdict["correct"] else "✖️"

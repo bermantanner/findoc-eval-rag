@@ -13,7 +13,7 @@ from ingestion.parser import parse_pdf
 from ingestion.chunker import chunk_blocks
 from ingestion.vectorizer import embed_chunks
 from retrieval.vector_store import save_document, save_chunks, search_chunks
-from synthesis.engine import stream_answer, plain_answer
+from synthesis.engine import stream_answer, generate_answer
 
 
 @asynccontextmanager
@@ -71,23 +71,59 @@ class QueryRequest(BaseModel):
     query: str
     document_id: Optional[str] = None
 
+class ChunkOut(BaseModel):
+    text: str
+    similarity: float
+    page: int | None = None
+    company: str | None = None
+    fiscal_year: str | None = None
+    block_type: str | None = None
 
-@app.post("/api/v1/query")
-async def query_document(request: Request, body: QueryRequest, format: str = "stream"):
-    chunks = await search_chunks(
+class QueryResponse(BaseModel):
+    query: str
+    document_id: str | None = None
+    answer: str
+    chunks: list[ChunkOut]
+
+def _to_chunk_out(c: dict) -> dict:
+    """Translate a nested search_chunks row into the flat public API shape."""
+    m = c["metadata"]
+    return {
+        "text": c["chunk_text"],
+        "similarity": c["similarity"],
+        "page": m.get("page_number"),
+        "company": m.get("company"),
+        "fiscal_year": m.get("fiscal_year"),
+        "block_type": m.get("block_type"),
+    }
+
+@app.post("/api/v1/query", response_model=QueryResponse)
+async def query_document(request: Request, body: QueryRequest, stream: bool = False):
+    rows = await search_chunks(
         request.app.state.db,
         query=body.query,
         document_id=body.document_id,
     )
+    chunks = [_to_chunk_out(c) for c in rows]
+
     if not chunks:
-        raise HTTPException(status_code=404, detail="No relevant chunks found.")
+        return QueryResponse(
+            query=body.query,
+            document_id=body.document_id,
+            answer="Insufficient data in source document.",
+            chunks=[],
+        )
 
-    if format == "plain":
-        result = await plain_answer(body.query, chunks)
-        from fastapi.responses import PlainTextResponse
-        return PlainTextResponse(result)
+    if stream:
+        return StreamingResponse(
+            stream_answer(body.query, chunks),
+            media_type="text/event-stream",
+        )
 
-    return StreamingResponse(
-        stream_answer(body.query, chunks),
-        media_type="text/event-stream",
+    answer = await generate_answer(body.query, chunks)
+    return QueryResponse(
+        query=body.query,
+        document_id=body.document_id,
+        answer=answer,
+        chunks=chunks,
     )

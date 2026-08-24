@@ -12,38 +12,31 @@ SYSTEM_PROMPT = (
 
 def _build_context(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(
-        f"[Source {i + 1} | Page {c['metadata'].get('page_number')} | "
-        f"{c['metadata'].get('company')} {c['metadata'].get('fiscal_year')}]\n{c['chunk_text']}"
+        f"[Source {i + 1} | Page {c['page']} | "
+        f"{c['company']} {c['fiscal_year']}]\n{c['text']}"
         for i, c in enumerate(chunks)
     )
 
+def _completion_kwargs(query: str, chunks: list[dict]) -> dict:
+    kwargs = {
+        "model": SYNTHESIS_MODEL,
+        "temperature": 0,
+        "messages":[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Context:\n{_build_context(chunks)}\n\nQuestion: {query}"},
+        ],
+    }
 
-def _format_plain(answer: str, chunks: list[dict]) -> str:
-    lines = ["=" * 60, "ANSWER", "=" * 60, answer.strip(), "", "=" * 60, "SOURCES", "=" * 60]
-    for i, c in enumerate(chunks):
-        m = c["metadata"]
-        snippet = c["chunk_text"].replace("\n", " ").strip()[:200]
-        lines += [
-            f"[{i + 1}] {m.get('company')} {m.get('fiscal_year')} — "
-            f"Page {m.get('page_number')} (similarity: {c['similarity']:.2f})",
-            f"    ...{snippet}...",
-            "",
-        ]
-    return "\n".join(lines)
+    return kwargs
 
 
 async def stream_answer(query: str, chunks: list[dict]):
     client = AsyncOpenAI(timeout=15.0)
 
     stream = await client.chat.completions.create(
-        model=SYNTHESIS_MODEL,
-        temperature=0,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{_build_context(chunks)}\n\nQuestion: {query}"},
-        ],
+        **_completion_kwargs(query, chunks),
         stream=True,
-    )
+        )
 
     async for event in stream:
         delta = event.choices[0].delta.content
@@ -54,17 +47,10 @@ async def stream_answer(query: str, chunks: list[dict]):
     yield "data: [DONE]\n\n"
 
 
-async def plain_answer(query: str, chunks: list[dict]) -> str:
+async def generate_answer(query: str, chunks: list[dict]) -> str:
     client = AsyncOpenAI(timeout=15.0)
 
-    response = await client.chat.completions.create(
-        model=SYNTHESIS_MODEL,
-        temperature=0,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{_build_context(chunks)}\n\nQuestion: {query}"},
-        ],
-    )
+    response = await client.chat.completions.create(**_completion_kwargs(query, chunks))
 
     answer = response.choices[0].message.content
-    return _format_plain(answer, chunks)
+    return answer
