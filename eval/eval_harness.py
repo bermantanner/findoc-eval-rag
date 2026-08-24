@@ -63,24 +63,18 @@ def judge_answer(client: OpenAI, question: str, expected: str, actual: str) -> d
     return json.loads(response.choices[0].message.content)
 
 
-def run_eval(document_id: str, api_url: str) -> None:
-    dataset_path = Path(__file__).parent / "golden_dataset.json"
-    with open(dataset_path) as f:
-        data = json.load(f)
-    questions = data["questions"]
-
-    openai_client = OpenAI()
+def run_pass(
+    document_id: str,
+    api_url: str,
+    questions: list[dict],
+    openai_client: OpenAI,
+    label: str,
+) -> list[dict]:
+    """Run the full question set once and return per-question results."""
     results = []
 
-    print(f"\nFinDoc-Eval Harness")
-    print(f"Document ID : {document_id}")
-    print(f"API         : {api_url}")
-    print(f"Questions   : {len(questions)}")
-    print(f"Judge       : {JUDGE_MODEL}")
-    print("-" * 60)
-
     for i, item in enumerate(questions):
-        print(f"[{i + 1}/{len(questions)}] {item['question'][:65]}...")
+        print(f"{label} [{i + 1}/{len(questions)}] {item['question'][:58]}...")
 
         start = time.time()
         try:
@@ -107,6 +101,7 @@ def run_eval(document_id: str, api_url: str) -> None:
                 "id": item["id"],
                 "question": item["question"],
                 "expected": item["expected_answer"],
+                "tags": item.get("tags", []),
                 "actual": str(exc),
                 "correct": False,
                 "reason": f"Request failed: {exc}",
@@ -115,7 +110,7 @@ def run_eval(document_id: str, api_url: str) -> None:
                 "latency": latency,
                 "transport_error": True,
             })
-            print(f"       ⚠️  TRANSPORT ERROR — {exc}")
+            print(f"       TRANSPORT ERROR — {exc}")
             continue
 
         verdict = judge_answer(
@@ -126,6 +121,7 @@ def run_eval(document_id: str, api_url: str) -> None:
             "id": item["id"],
             "question": item["question"],
             "expected": item["expected_answer"],
+            "tags": item.get("tags", []),
             "actual": actual_answer,
             "correct": verdict["correct"],
             "reason": verdict["reason"],
@@ -135,76 +131,165 @@ def run_eval(document_id: str, api_url: str) -> None:
             "transport_error": False,
         })
 
-        status = "✔️" if verdict["correct"] else "✖️"
+        status = "PASS" if verdict["correct"] else "FAIL"
         retrieval = "HIT " if top_similarity >= RETRIEVAL_HIT_THRESHOLD else "MISS"
         print(f"       {status} | retrieval={retrieval} ({top_similarity:.2f}) | {latency:.1f}s")
-        print(f"          judge: {verdict['reason']}")
 
-    print("-" * 60)
-    write_benchmarks(results, document_id)
+    return results
+
+
+def run_eval(document_id: str, api_url: str, runs: int) -> None:
+    dataset_path = Path(__file__).parent / "golden_dataset.json"
+    with open(dataset_path) as f:
+        data = json.load(f)
+    questions = data["questions"]
+
+    openai_client = OpenAI()
+
+    print(f"\nFinDoc-Eval Harness")
+    print(f"Document ID : {document_id}")
+    print(f"API         : {api_url}")
+    print(f"Questions   : {len(questions)}")
+    print(f"Runs        : {runs}")
+    print(f"Judge       : {JUDGE_MODEL} (temperature=0)")
+    print("-" * 66)
+
+    all_runs = []
+    for r in range(runs):
+        label = f"run {r + 1}/{runs}" if runs > 1 else "     "
+        all_runs.append(run_pass(document_id, api_url, questions, openai_client, label))
+        if runs > 1:
+            score = sum(1 for x in all_runs[-1] if x["correct"])
+            print(f"  → run {r + 1} scored {score}/{len(questions)}")
+            print("-" * 66)
+
+    write_benchmarks(all_runs, document_id)
+
+    scores = [sum(1 for x in run if x["correct"]) for run in all_runs]
+    n = len(questions)
+    print(f"\nScores per run : {scores} (out of {n})")
+    print(f"Reported       : {summarize_score(scores, n)}")
     print(f"\nResults written to BENCHMARKS.md")
 
 
-def write_benchmarks(results: list[dict], document_id: str) -> None:
-    n = len(results)
-    n_correct = sum(1 for r in results if r["correct"])
-    n_retrieval_hits = sum(
-        1 for r in results if r["top_similarity"] >= RETRIEVAL_HIT_THRESHOLD
-    )
-    latencies = [r["latency"] for r in results]
+def summarize_score(scores: list[int], n: int) -> str:
+    """Format scores as a mean with a spread, e.g. '65% ± 5pp over 2 runs'."""
+    pcts = [s / n * 100 for s in scores]
+    mean = sum(pcts) / len(pcts)
+    if len(pcts) == 1:
+        return f"{mean:.0f}% (single run — no error bar)"
+    spread = (max(pcts) - min(pcts)) / 2
+    return f"{mean:.0f}% ± {spread:.0f}pp over {len(pcts)} runs"
+
+
+def write_benchmarks(all_runs: list[list[dict]], document_id: str) -> None:
+    runs = len(all_runs)
+    n = len(all_runs[0])
+    ids = [r["id"] for r in all_runs[0]]
+
+    scores = [sum(1 for x in run if x["correct"]) for run in all_runs]
+    correct_counts = {
+        qid: sum(1 for run in all_runs for x in run if x["id"] == qid and x["correct"])
+        for qid in ids
+    }
+    unstable = [qid for qid, c in correct_counts.items() if 0 < c < runs]
+
+    hit_counts = {
+        qid: sum(
+            1 for run in all_runs for x in run
+            if x["id"] == qid and x["top_similarity"] >= RETRIEVAL_HIT_THRESHOLD
+        )
+        for qid in ids
+    }
+    mean_hits = sum(hit_counts.values()) / runs
+
+    latencies = [x["latency"] for run in all_runs for x in run]
     avg_latency = sum(latencies) / len(latencies)
     p95_latency = sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)]
 
-    run_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    transport_errors = sum(1 for run in all_runs for x in run if x["transport_error"])
 
     lines = [
         "# Eval Benchmarks — NVIDIA FY2025 10-K",
         "",
-        f"**Run:** {run_time}  ",
+        f"**Run:** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ",
         f"**Document ID:** `{document_id}`  ",
-        f"**Judge model:** {JUDGE_MODEL}  ",
-        f"**Retrieval hit threshold:** similarity ≥ {RETRIEVAL_HIT_THRESHOLD}",
+        f"**Judge model:** {JUDGE_MODEL} (`temperature=0`)  ",
+        f"**Passes:** {runs}",
         "",
         "## Summary",
         "",
         "| Metric | Result |",
         "|---|---|",
-        f"| Answer Correctness | {n_correct}/{n} ({n_correct / n * 100:.0f}%) |",
-        f"| Retrieval Hit Rate | {n_retrieval_hits}/{n} ({n_retrieval_hits / n * 100:.0f}%) |",
-        f"| Avg Latency | {avg_latency:.1f}s |",
-        f"| P95 Latency | {p95_latency:.1f}s |",
+        f"| **Answer Correctness** | **{summarize_score(scores, n)}** |",
+        f"| Scores per pass | {', '.join(f'{s}/{n}' for s in scores)} |",
+        f"| Unstable questions | {len(unstable)}/{n}"
+        + (f" ({', '.join(unstable)})" if unstable else "")
+        + " |",
+        f"| Retrieval confidence ≥ {RETRIEVAL_HIT_THRESHOLD} | {mean_hits:.1f}/{n} — *proxy, not a retrieval metric* |",
+        f"| Avg latency | {avg_latency:.1f}s |",
+        f"| P95 latency | {p95_latency:.1f}s |",
+        f"| Transport errors | {transport_errors} |",
         "",
+    ]
+
+    if runs > 1:
+        lines += [
+            "> The error bar is the headline number. LLM output is sampled, so a benchmark",
+            "> without a spread cannot distinguish a real improvement from a re-roll.",
+            "",
+        ]
+
+    lines += [
         "## Per-Question Results",
         "",
-        "| # | Question | Correct? | Top Sim | Latency | Judge Reason |",
+        f"| # | Question | Correct | Stable | Top Sim | Judge Reason (last pass) |",
         "|---|---|---|---|---|---|",
     ]
 
-    for i, r in enumerate(results):
-        status = "✔️" if r["correct"] else "✖️"
-        q = r["question"][:55] + ("..." if len(r["question"]) > 55 else "")
-        retrieval_flag = "" if r["top_similarity"] >= RETRIEVAL_HIT_THRESHOLD else " [!]"
+    last = all_runs[-1]
+    for i, r in enumerate(last):
+        qid = r["id"]
+        c = correct_counts[qid]
+        verdict = "PASS" if c == runs else ("FAIL" if c == 0 else "MIXED")
+        stable = "—" if runs == 1 else ("yes" if c in (0, runs) else "**no**")
+        q = r["question"][:52] + ("..." if len(r["question"]) > 52 else "")
+        flag = "" if r["top_similarity"] >= RETRIEVAL_HIT_THRESHOLD else " [!]"
         lines.append(
-            f"| {i + 1} | {q} | {status} | "
-            f"{r['top_similarity']:.2f}{retrieval_flag} | "
-            f"{r['latency']:.1f}s | {r['reason']} |"
+            f"| {i + 1} | {q} | {verdict} ({c}/{runs}) | {stable} | "
+            f"{r['top_similarity']:.2f}{flag} | {r['reason']} |"
         )
 
-    failed = [r for r in results if not r["correct"]]
+    by_tag: dict[str, list[int]] = {}
+    for r in last:
+        for tag in r["tags"]:
+            by_tag.setdefault(tag, []).append(correct_counts[r["id"]])
+    if by_tag:
+        lines += ["", "## By Tag", "", "| Tag | Correct | Questions |", "|---|---|---|"]
+        for tag in sorted(by_tag, key=lambda t: (sum(by_tag[t]) / (len(by_tag[t]) * runs))):
+            vals = by_tag[tag]
+            lines.append(
+                f"| {tag} | {sum(vals)}/{len(vals) * runs} | {len(vals)} |"
+            )
+
+    failed = [r for r in last if correct_counts[r["id"]] < runs]
     if failed:
-        lines += ["", "## Failed Cases", ""]
+        lines += ["", "## Failed and Unstable Cases", ""]
         for r in failed:
-            actual_truncated = r["actual"][:600] + ("..." if len(r["actual"]) > 600 else "")
+            qid = r["id"]
+            actual = r["actual"][:600] + ("..." if len(r["actual"]) > 600 else "")
             lines += [
-                f"### {r['id']}",
+                f"### {qid} — {correct_counts[qid]}/{runs} passes correct",
                 "",
                 f"**Question:** {r['question']}",
                 "",
                 f"**Expected:** {r['expected']}",
                 "",
-                f"**Actual:** {actual_truncated}",
+                f"**Actual (last pass):** {actual}",
                 "",
                 f"**Judge:** {r['reason']}",
+                "",
+                f"**Pages retrieved:** {r['retrieved_pages']}",
                 "",
             ]
 
@@ -216,12 +301,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--document-id",
         required=True,
-        help="UUID of the uploaded NVIDIA 10-K document (from upload response)",
+        help="UUID of the uploaded document (from the upload response)",
     )
     parser.add_argument(
         "--api-url",
         default="http://localhost:8000",
         help="Base URL of the API (default: http://localhost:8000)",
     )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Number of full passes. >1 reports a mean and spread (default: 1)",
+    )
     args = parser.parse_args()
-    run_eval(args.document_id, args.api_url)
+    run_eval(args.document_id, args.api_url, args.runs)

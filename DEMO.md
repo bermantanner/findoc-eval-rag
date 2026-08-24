@@ -1,6 +1,6 @@
 # DEMO — Building and Running FinDoc-Eval
 
-These instructions build the full stack from scratch on a Linux environment using Docker.
+These instructions build the full stack from scratch using Docker. Tested on macOS and Linux.
 
 ---
 
@@ -79,11 +79,11 @@ curl -X POST http://localhost:8000/api/v1/documents/upload \
   -F "fiscal_year=FY2025"
 ```
 
-This will parse, chunk, embed (344 chunks for the NVIDIA FY2025 10-K), and store everything in the database. The process takes 30–60 seconds depending on document size.
+This will parse, chunk, embed (340 chunks for the NVIDIA FY2025 10-K), and store everything in the database. The process takes 30–60 seconds depending on document size.
 
 Expected response:
 ```json
-{"document_id": "daf8d328-94e5-4024-aeef-db57e94ed2f2", "chunks_stored": 344}
+{"document_id": "daf8d328-94e5-4024-aeef-db57e94ed2f2", "chunks_stored": 340}
 ```
 
 Save the `document_id` — you'll need it to query.
@@ -121,18 +121,40 @@ Type `quit` to exit.
 
 ### Raw API (optional)
 
-For direct API access the endpoint accepts JSON and returns plain text with `?format=plain`:
+The endpoint accepts JSON and returns structured JSON:
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/query?format=plain" \
+curl -s -X POST "http://localhost:8000/api/v1/query" \
   -H "X-API-Key: dev-secret-key" \
   -H "Content-Type: application/json" \
-  -d '{"query": "What was total revenue in FY2025?", "document_id": "<your-document-id>"}'
+  -d '{"query": "What was NVIDIA total revenue for fiscal year 2025?", "document_id": "<your-document-id>"}' \
+  | python3 -m json.tool
 ```
 
-Omit `?format=plain` to receive a raw Server-Sent Events stream instead.
+```json
+{
+  "query": "What was NVIDIA total revenue for fiscal year 2025?",
+  "document_id": "<your-document-id>",
+  "answer": "NVIDIA's total revenue for fiscal year 2025 was $130,497 million.",
+  "chunks": [
+    {"text": "...", "similarity": 0.686, "page": 52,
+     "company": "NVIDIA", "fiscal_year": "FY2025", "block_type": "table"}
+  ]
+}
+```
 
----
+Add `?stream=true` to receive Server-Sent Events instead (`-N` disables curl buffering so you see tokens arrive individually):
+
+```bash
+curl -N -X POST "http://localhost:8000/api/v1/query?stream=true" \
+  -H "X-API-Key: dev-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What was NVIDIA total revenue for fiscal year 2025?", "document_id": "<your-document-id>"}'
+```
+
+Interactive schema docs are served at **http://localhost:8000/docs**.
+
+> **Note on phrasing:** retrieval is sensitive to how a question is worded. `"What was NVIDIA's total revenue for fiscal year 2025?"` retrieves at similarity 0.686, while `"What was total revenue?"` — the same question — retrieves at 0.429 and is rejected by the confidence gate. Use specific phrasing when testing.
 
 ---
 
@@ -152,7 +174,16 @@ Run the benchmark, passing the `document_id` from step 5:
 python3 eval/eval_harness.py --document-id <your-document-id>
 ```
 
-Results are printed to the terminal in real time and written to `BENCHMARKS.md` when complete.
+Add `--runs 3` to repeat the full pass and report a mean and spread instead of a single
+score. This matters: LLM output is sampled, so a single run cannot distinguish a real
+change from a re-roll.
+
+```bash
+python3 eval/eval_harness.py --document-id <your-document-id> --runs 3
+```
+
+Results are printed to the terminal in real time and written to `BENCHMARKS.md` when
+complete, including which questions were unstable across passes and a per-tag breakdown.
 
 ---
 
@@ -160,5 +191,5 @@ Results are printed to the terminal in real time and written to `BENCHMARKS.md` 
 
 - The API key for V1 is hardcoded as `dev-secret-key`. Full JWT authentication is planned for V2.
 - Only native-text-layer PDFs are supported. Scanned PDFs (image-only) will return `415 Unsupported Media Type`.
-- The similarity confidence gate (`min_similarity=0.5`) will return a 404 if no retrieved chunks are relevant enough. This is intentional — it prevents the LLM from being called on unrelated queries.
+- The similarity confidence gate (`min_similarity=0.5`) returns **200** with `"answer": "Insufficient data in source document."` and an empty `chunks` array when nothing is relevant enough. The LLM is never called in that case — it saves the API cost and prevents the model from answering on unrelated context. It deliberately is *not* a 404: a refusal is a system behavior, and the eval harness needs to distinguish it from a transport failure.
 - To stop the stack: `docker compose down`. To also delete the database volume: `docker compose down -v`.
