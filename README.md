@@ -111,7 +111,3 @@ findoc-eval-rag/
 ## Setup
 
 See [DEMO.md](DEMO.md) for full build and usage instructions.
-
-## Demo
-https://youtu.be/G7z_XG-T8DY
-
