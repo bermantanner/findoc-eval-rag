@@ -2,16 +2,18 @@
 
 An asynchronous RAG (Retrieval-Augmented Generation) pipeline for querying SEC 10-K financial filings. Upload a PDF, ask a question, get an answer grounded in the exact source passages — returned with the page number and similarity score of every chunk used.
 
-The primary engineering focus is the **evaluation harness**. Against 10 curated questions from the NVIDIA FY2025 10-K, the system scores **60% answer correctness**, identical across three consecutive passes. One open-ended question has flipped between passing and failing across a wider sample, so the honest spread is closer to ±5pp — three passes is a small sample for estimating variance, and ±0pp is not a determinism claim.
+The primary engineering focus is the **evaluation harness**. Against 10 curated questions from the NVIDIA FY2025 10-K, the system scores **77% ± 5pp answer correctness** over three passes (8/10, 7/10, 8/10). Nine questions are stable across runs; one open-ended question flips. Three passes is a small sample for estimating variance, so the spread is indicative rather than precise.
 
-The error bar is the point. An earlier version of this benchmark reported a single number — 70% — that turned out not to be reproducible: re-running it two months later against the same document with no code changes produced 60%. Neither the synthesis call nor the LLM judge was pinned to `temperature=0`, so every run resampled both the answer *and* its grade. See [Reproducibility](#reproducibility) and [Known Limitations](#known-limitations).
+The error bar is the point. An earlier version of this benchmark reported a single number — 70% — that turned out not to be reproducible: re-running it two months later against the same document with no code changes produced 60%. Neither the synthesis call nor the LLM judge was pinned to `temperature=0`, so every run resampled both the answer *and* its grade. Pinning temperature produced a stable 60% ± 0 — the number stopped moving, which is what "fixed" means here, not that it went up.
+
+Once the measurement held still, failures could be attributed. Widening retrieval from the top 5 chunks to the top 7 fixed one question outright and moved the score from 60% to 77% — but it also widened the spread from ±0 to ±5pp, an accuracy/stability tradeoff that a single-number benchmark could not have shown. A second failing question turned out to be a defect in the golden answer rather than the system: the same instrument identified one bug in the pipeline and one in the test. See [Reproducibility](#reproducibility) and [Known Limitations](#known-limitations).
 
 ---
 
 ## What it does
 
 1. **Ingest** — Upload a native-text-layer PDF. The pipeline extracts text and tables (tables are converted to Markdown to preserve row/column structure), chunks the content into ~512-token segments with ~50-token overlap, generates embeddings via OpenAI, and stores them in PostgreSQL + pgvector.
-2. **Retrieve** — The query is embedded and matched against the vector store by cosine similarity. A **confidence gate** rejects results below a minimum similarity; if nothing clears it, the pipeline returns "Insufficient data" without calling the LLM at all.
+2. **Retrieve** — The query is embedded and matched against the vector store by cosine similarity, returning the top 7 chunks. A **confidence gate** then rejects any of those below a minimum similarity; it filters within the top-k rather than backfilling, so the model may receive fewer than seven. If nothing clears the gate, the pipeline returns "Insufficient data" without calling the LLM at all.
 3. **Synthesize** — Retrieved chunks are assembled into a strict prompt and answered by `gpt-4o` at `temperature=0`, constrained to the provided context. Every response carries its sources.
 
 ---
@@ -107,7 +109,7 @@ LLM output is sampled, so an evaluation harness is only useful if its own varian
 
 - `temperature=0` is pinned on the synthesis call, the streaming call, and the judge call.
 - Synthesis parameters are built in one place (`_completion_kwargs`) so the streaming and non-streaming paths cannot silently diverge.
-- The judge was verified deterministic under fixed input: eight identical verdicts in eight runs on the same answer. Residual variance in the benchmark comes from **synthesis**, not from grading.
+- The judge was checked for consistency under fixed input: the same answer graded 24 times (three runs of eight) returned 24 identical verdicts. That check used a simplified grading prompt rather than the production one, so it establishes low variance in the grading step — not that the production judge's grades are correct (see Known Limitations). Residual variance in the benchmark comes from **synthesis**, not from grading.
 - `temperature=0` is not an absolute guarantee — floating-point non-associativity and request batching still permit rare divergence on near-tied tokens — so results are reported as a mean and range over repeated runs rather than a single figure.
 
 ---
@@ -116,15 +118,17 @@ LLM output is sampled, so an evaluation harness is only useful if its own varian
 
 These are measured, not hypothetical.
 
-**"Retrieval hit rate" does not measure retrieval.** It reports the cosine similarity of the top-ranked chunk against a fixed threshold. Cosine magnitude correlates strongly with chunk length and density, so the metric partly measures how chunky a passage is rather than whether it is the right one — and it inspects only rank 1 of the 5 chunks actually passed to the model. Two benchmark questions score as retrieval "hits" while the system answers "Insufficient data." *Fix in progress: record ground-truth source pages per question and compute recall@k and MRR.*
+**"Retrieval hit rate" does not measure retrieval.** It reports the cosine similarity of the top-ranked chunk against a fixed threshold. Cosine magnitude correlates strongly with chunk length and density, so the metric partly measures how chunky a passage is rather than whether it is the right one — and it inspects only rank 1 of the 7 chunks actually passed to the model. One benchmark question scores as a retrieval "hit" while the system answers "Insufficient data." On the unstable question, the top five chunks scored 0.617, 0.610, 0.604, 0.602, and 0.599 — within two hundredths of each other, so the ranking was barely discriminating at all. *Fix in progress: record ground-truth source pages per question and compute recall@k and MRR.*
 
-**Embeddings discriminate poorly within a topic.** They separate "revenue" from "board meetings" easily, but separate "Data Center segment revenue" from "total revenue" barely at all. This is the direct cause of two benchmark failures. *Fix: hybrid retrieval — vector search for recall, keyword or re-ranking for precision.*
+**Embeddings discriminate poorly within a topic.** They separate "revenue" from "board meetings" easily, but separate one revenue figure from another barely at all. The Data Center segment question failed at `top_k=5` and began passing once retrieval was widened to 7 — its evidence had been ranked just outside the window. The Gaming segment question still fails at 7. *Fix: hybrid retrieval — vector search for recall, keyword or re-ranking for precision.*
 
 **Retrieval is sensitive to query phrasing.** `"What was NVIDIA's total revenue for fiscal year 2025?"` retrieves at 0.686; `"What was total revenue?"` — the same question — retrieves at 0.429 and is rejected by the confidence gate. The gate threshold is calibrated against a golden dataset whose questions are all written in the same formal register, so the benchmark cannot currently see this failure.
 
-**The judge is unvalidated against human labels.** It is deterministic, but nobody has confirmed its grades match a human's. *Fix: hand-label the set once and measure judge/human agreement.*
+**The judge is unvalidated against human labels.** It is consistent, but nobody has confirmed its grades match a human's. *Fix: hand-label the set once and measure judge/human agreement.*
 
-**The golden answers have not been verified against the source PDF.** Several were taken from public sources. The eval already caught one consequence: NVIDIA does not report "Data Center" and "Gaming" as financial segments — its reporting segments are Compute & Networking and Graphics — so two expected answers describe a breakdown that appears only in a footnote.
+**One golden answer is over-specified, and the judge grades coverage, not just correctness.** The manufacturing-risk question's expected answer bundles two claims — dependence on a small number of manufacturers including TSMC, and the consequence that disruption could materially harm the business. Across eight synthesis runs on identical retrieved context, the system produced the same bulleted risk list every time; one run appended a closing sentence about consequences. A controlled test confirmed the mechanism: the shorter answer fails 3/3, the longer one passes 3/3, and they differ only by that clause. The retrieved chunks never mention TSMC by name. This is the one unstable question in the benchmark, and it is a defect in the test, not the system. *Fix: split bundled claims into separate questions, or grade per-claim rather than all-or-nothing.*
+
+**The golden answers have not been verified against the source PDF.** Several were taken from public sources. NVIDIA does not report "Data Center" and "Gaming" as financial segments — its reporting segments are Compute & Networking and Graphics — so those two expected answers describe a product-level breakdown that appears only in a footnote. That makes them harder to retrieve, not wrong: the Data Center figure is correct and the system now finds it.
 
 **Scale is one document.** 340 chunks, one filing. The similarity threshold and retrieval behavior would not transfer unchanged to a multi-company corpus without metadata pre-filtering.
 

@@ -51,7 +51,7 @@ async def search_chunks(
     query: str,
     document_id: str | None = None,
     user_id: str = "default",
-    top_k: int = 5,
+    top_k: int = 7,
     min_similarity: float = 0.5,
 ) -> list[dict]:
     client = AsyncOpenAI(timeout=30.0)
